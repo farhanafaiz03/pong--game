@@ -3,15 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pong</title>
+  <title>Pong - Sound + 2 Player</title>
   <style>
     :root {
-      --bg: #111827;
-      --panel: #1f2937;
-      --paddle: #f9fafb;
+      --bg: #0f172a;
+      --panel: #111827;
+      --table: #0b1220;
+      --paddle: #f8fafc;
       --ball: #fbbf24;
       --line: rgba(255,255,255,0.25);
-      --text: #f3f4f6;
+      --text: #e5e7eb;
+      --accent: #38bdf8;
     }
 
     * {
@@ -23,33 +25,56 @@
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: radial-gradient(circle at top, #1f2937, var(--bg));
-      font-family: Arial, Helvetica, sans-serif;
+      background: radial-gradient(circle at top, #1e293b, var(--bg));
       color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
     }
 
-    .game-wrap {
+    .game-shell {
       background: var(--panel);
-      border: 3px solid rgba(255,255,255,0.15);
-      border-radius: 12px;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+      border: 3px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
       overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.45);
     }
 
-    canvas {
-      display: block;
-      background: #0b1220;
-      width: 800px;
-      height: 450px;
-      border-bottom: 2px solid var(--line);
+    .top-bar {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .mode-btn {
+      background: #1f2937;
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: 0.2s ease;
+    }
+
+    .mode-btn:hover {
+      background: #2b3a4c;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #082f49;
+      border-color: transparent;
     }
 
     .scoreboard {
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 32px;
-      padding: 12px 0 10px;
+      gap: 28px;
+      padding: 12px 0 8px;
       font-size: 24px;
       font-weight: bold;
       letter-spacing: 2px;
@@ -60,15 +85,28 @@
       min-width: 60px;
       text-align: center;
     }
+
+    canvas {
+      display: block;
+      background: var(--table);
+      width: 800px;
+      height: 450px;
+    }
   </style>
 </head>
 <body>
-  <div class="game-wrap">
+  <div class="game-shell">
+    <div class="top-bar">
+      <button class="mode-btn active" data-mode="computer">Vs Computer</button>
+      <button class="mode-btn" data-mode="two-player">Two Players</button>
+    </div>
+
     <div class="scoreboard">
       <div id="leftScore" class="score">0</div>
       <div>:</div>
       <div id="rightScore" class="score">0</div>
     </div>
+
     <canvas id="gameCanvas" width="800" height="450"></canvas>
   </div>
 
@@ -76,29 +114,31 @@
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
 
-    const scoreElLeft = document.getElementById("leftScore");
-    const scoreElRight = document.getElementById("rightScore");
+    const leftScoreEl = document.getElementById("leftScore");
+    const rightScoreEl = document.getElementById("rightScore");
+    const modeButtons = document.querySelectorAll(".mode-btn");
 
     const paddleWidth = 12;
     const paddleHeight = 90;
-    const paddleSpeed = 7;
     const ballRadius = 8;
     const wallPadding = 10;
 
+    let currentMode = "computer";
+
     const leftPaddle = {
       x: 30,
-      y: canvas.height / 2 - paddleHeight / 2,
+      y: canvas.height / 2 - 45,
       width: paddleWidth,
       height: paddleHeight,
-      speed: paddleSpeed
+      speed: 7
     };
 
     const rightPaddle = {
       x: canvas.width - 30 - paddleWidth,
-      y: canvas.height / 2 - paddleHeight / 2,
+      y: canvas.height / 2 - 45,
       width: paddleWidth,
       height: paddleHeight,
-      speed: 5
+      speed: 7
     };
 
     const ball = {
@@ -110,65 +150,122 @@
     };
 
     const score = { left: 0, right: 0 };
+
     const keys = {
       ArrowUp: false,
-      ArrowDown: false
+      ArrowDown: false,
+      w: false,
+      s: false
     };
+
+    // Sound system
+    let audioCtx = null;
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function playTone(frequency, duration, volume, type = "sine", slide = 0) {
+      ensureAudio();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+      if (slide !== 0) {
+        oscillator.frequency.linearRampToValueAtTime(
+          frequency + slide,
+          audioCtx.currentTime + duration
+        );
+      }
+
+      gainNode.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(volume, audioCtx.currentTime + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    }
+
+    function playPaddleSound() {
+      playTone(180, 0.08, 0.08, "square", 80);
+    }
+
+    function playWallSound() {
+      playTone(120, 0.06, 0.05, "triangle", 30);
+    }
+
+    function playScoreSound() {
+      playTone(440, 0.12, 0.08, "sawtooth", 100);
+    }
 
     function clamp(value, min, max) {
       return Math.min(Math.max(value, min), max);
     }
 
-    function resetBall(direction) {
+    function updateScore() {
+      leftScoreEl.textContent = score.left;
+      rightScoreEl.textContent = score.right;
+    }
+
+    function resetBall(direction = 1) {
       ball.x = canvas.width / 2;
       ball.y = canvas.height / 2;
-      const angle = (Math.random() * 0.8 - 0.4) + (direction > 0 ? 0.2 : -0.2);
-      const speed = 5.5;
+
+      const angle = (Math.random() * 1.2 - 0.6); // random between -0.6 and 0.6 rad
+      const speed = 5.8;
 
       ball.vx = direction * speed * Math.cos(angle);
       ball.vy = speed * Math.sin(angle);
     }
 
-    function updateScore() {
-      scoreElLeft.textContent = score.left;
-      scoreElRight.textContent = score.right;
+    function updateLeftPaddleFromKeys() {
+      if (keys.ArrowUp) leftPaddle.y -= leftPaddle.speed;
+      if (keys.ArrowDown) leftPaddle.y += leftPaddle.speed;
+
+      leftPaddle.y = clamp(
+        leftPaddle.y,
+        wallPadding,
+        canvas.height - leftPaddle.height - wallPadding
+      );
     }
 
-    function updatePaddles() {
-      // Left paddle: keyboard controls
-      if (keys.ArrowUp) {
-        leftPaddle.y -= leftPaddle.speed;
+    function updateRightPaddle() {
+      if (currentMode === "computer") {
+        const targetY = ball.y - rightPaddle.height / 2;
+        const followStrength = 0.11;
+        rightPaddle.y += (targetY - rightPaddle.y) * followStrength;
+      } else {
+        if (keys.w) rightPaddle.y -= rightPaddle.speed;
+        if (keys.s) rightPaddle.y += rightPaddle.speed;
       }
-      if (keys.ArrowDown) {
-        leftPaddle.y += leftPaddle.speed;
-      }
 
-      // Left paddle: mouse control (move paddle to cursor position)
-      canvas.addEventListener("mousemove", (event) => {
-        const rect = canvas.getBoundingClientRect();
-        const mouseY = ((event.clientY - rect.top) / rect.height) * canvas.height;
-        leftPaddle.y = mouseY - leftPaddle.height / 2;
-      });
-
-      // Right paddle: AI
-      const targetY = ball.y - rightPaddle.height / 2;
-      const followFactor = 0.12;
-      rightPaddle.y += (targetY - rightPaddle.y) * followFactor;
-
-      // Clamp paddle positions within canvas
-      leftPaddle.y = clamp(leftPaddle.y, wallPadding, canvas.height - leftPaddle.height - wallPadding);
-      rightPaddle.y = clamp(rightPaddle.y, wallPadding, canvas.height - rightPaddle.height - wallPadding);
+      rightPaddle.y = clamp(
+        rightPaddle.y,
+        wallPadding,
+        canvas.height - rightPaddle.height - wallPadding
+      );
     }
 
     function handleBallWallCollision() {
       if (ball.y - ball.radius <= 0) {
         ball.y = ball.radius;
         ball.vy *= -1;
+        playWallSound();
       }
 
       if (ball.y + ball.radius >= canvas.height) {
         ball.y = canvas.height - ball.radius;
         ball.vy *= -1;
+        playWallSound();
       }
     }
 
@@ -184,8 +281,7 @@
       if (withinX && withinY) {
         const relativeHit = (ball.y - (paddle.y + paddle.height / 2)) / (paddle.height / 2);
         const bounceAngle = relativeHit * (Math.PI / 3);
-
-        const speed = Math.max(Math.hypot(ball.vx, ball.vy), 5) + 0.25;
+        const speed = Math.max(Math.hypot(ball.vx, ball.vy), 5) + 0.2;
 
         if (isLeft) {
           ball.x = paddle.x + paddle.width + ball.radius;
@@ -196,46 +292,48 @@
         }
 
         ball.vy = Math.sin(bounceAngle) * speed;
+        playPaddleSound();
       }
     }
 
     function checkScoring() {
       if (ball.x - ball.radius < 0) {
-        score.right++;
+        score.right += 1;
         updateScore();
+        playScoreSound();
         resetBall(1);
       }
 
       if (ball.x + ball.radius > canvas.width) {
-        score.left++;
+        score.left += 1;
         updateScore();
+        playScoreSound();
         resetBall(-1);
       }
     }
 
     function update() {
-      updatePaddles();
+      updateLeftPaddleFromKeys();
+      updateRightPaddle();
 
       ball.x += ball.vx;
       ball.y += ball.vy;
 
       handleBallWallCollision();
-
       handlePaddleCollision(leftPaddle, true);
       handlePaddleCollision(rightPaddle, false);
-
       checkScoring();
     }
 
     function drawBackground() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Court
       ctx.fillStyle = "#0b1220";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Center dashed line
       ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 2;
       ctx.setLineDash([12, 12]);
       ctx.beginPath();
       ctx.moveTo(canvas.width / 2, 0);
@@ -243,7 +341,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // "Net" decorative center dot
+      // Decorative center dots
       ctx.fillStyle = "rgba(255,255,255,0.2)";
       for (let i = 0; i < canvas.height; i += 18) {
         ctx.fillRect(canvas.width / 2 - 2, i, 4, 10);
@@ -251,7 +349,7 @@
     }
 
     function drawPaddle(paddle) {
-      ctx.fillStyle = "#f9fafb";
+      ctx.fillStyle = "#f8fafc";
       ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
     }
 
@@ -275,17 +373,50 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // Keyboard input
+    // Mode switching
+    modeButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        currentMode = button.dataset.mode;
+        modeButtons.forEach(btn => btn.classList.toggle("active", btn === button));
+
+        // Reset ball direction depending on mode
+        resetBall(Math.random() < 0.5 ? -1 : 1);
+      });
+    });
+
+    // Mouse movement for left paddle
+    canvas.addEventListener("mousemove", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseY = ((event.clientY - rect.top) / rect.height) * canvas.height;
+      leftPaddle.y = mouseY - leftPaddle.height / 2;
+      leftPaddle.y = clamp(
+        leftPaddle.y,
+        wallPadding,
+        canvas.height - leftPaddle.height - wallPadding
+      );
+    });
+
+    // Keyboard handlers
     document.addEventListener("keydown", (event) => {
+      const key = event.key.toLowerCase();
       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         keys[event.key] = true;
+        event.preventDefault();
+      }
+      if (key === "w" || key === "s") {
+        keys[key] = true;
         event.preventDefault();
       }
     });
 
     document.addEventListener("keyup", (event) => {
+      const key = event.key.toLowerCase();
       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
         keys[event.key] = false;
+        event.preventDefault();
+      }
+      if (key === "w" || key === "s") {
+        keys[key] = false;
         event.preventDefault();
       }
     });
